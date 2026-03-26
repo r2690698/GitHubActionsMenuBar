@@ -1,2 +1,12 @@
-@MainActor static var menuBarIcon: NSImage { /* icon code */ }
-@MainActor static var applicationIcon: NSImage { /* icon code */ }
+import AppKit
+
+@MainActor
+struct AppAssets {
+    static var menuBarIcon: NSImage? {
+        return NSImage(named: "MenuBarIcon")
+    }
+
+    static var applicationIcon: NSImage? {
+        return NSImage(named: "ApplicationIcon")
+    }
+}
