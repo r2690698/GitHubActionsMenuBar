@@ -1,0 +1,96 @@
+name: Build And Release
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            RELEASE_VERSION="${VERSION}-beta.pr${{ github.event.pull_request.number }}"
+            RELEASE_NAME="Beta ${VERSION} PR #${{ github.event.pull_request.number }}"
+            PRERELEASE="true"
+          else
+            RELEASE_VERSION="${VERSION}"
+            RELEASE_NAME="Release ${VERSION}"
+            PRERELEASE="false"
+          fi
+
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Run self-tests
+        run: swift run GitHubActionsMenuBar --self-test
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Package app bundle
+        env:
+          APP_VERSION: ${{ steps.version.outputs.release_version }}
+          APP_BUILD: ${{ github.run_number }}
+        run: ./scripts/package_app.sh
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/GitHubActionsMenuBar.app" \
+            "release-assets/GitHubActionsMenuBar-${{ steps.version.outputs.release_version }}.zip"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitHubActionsMenuBar-${{ steps.version.outputs.release_version }}
+          path: release-assets/GitHubActionsMenuBar-${{ steps.version.outputs.release_version }}.zip
+
+      - name: Publish beta prerelease
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.release_name }}
+          prerelease: true
+          draft: false
+          target_commitish: ${{ github.event.pull_request.head.sha }}
+          files: release-assets/GitHubActionsMenuBar-${{ steps.version.outputs.release_version }}.zip
+          generate_release_notes: true
+
+      - name: Publish production release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.release_name }}
+          prerelease: false
+          draft: false
+          files: release-assets/GitHubActionsMenuBar-${{ steps.version.outputs.release_version }}.zip
+          generate_release_notes: true
